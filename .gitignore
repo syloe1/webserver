@@ -1,0 +1,62 @@
+# ========== CMake 编译构建产物 ==========
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+*.o
+*.a
+*.so
+*.out
+TinyWebServer
+
+# ========== 日志文件（项目运行生成log） ==========
+*.log
+logs/
+log/
+
+# ========== 代码编译/调试临时文件 ==========
+*.core
+core.*
+*.dSYM
+*.pdb
+*.stackdump
+
+# ========== 系统隐藏文件 ==========
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ========== VSCode 远程/本地缓存（你之前爆满的元凶） ==========
+.vscode/
+.vscode-server/
+*.code-workspace
+
+# ========== 其他IDE配置 ==========
+.idea/
+*.user
+*.layout
+*.suo
+*.vcxproj
+*.sln
+
+# ========== 包管理器缓存 ==========
+node_modules/
+npm-debug.log
+target/
+__pycache__/
+
+# ========== 数据库临时文件 ==========
+*.db
+*.sqlite
+*.sqlite3
+
+# ========== 测试/临时文件 ==========
+test/tmp/
+tmp/
+temp/
+*.tmp

@@ -1,0 +1,137 @@
+#ifndef WEBSERVER_H
+#define WEBSERVER_H
+
+#include <arpa/inet.h>
+#include <cassert>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string>
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "core/locker.h"
+#include "net/http_conn.h"
+#include "core/lst_timer.h"
+#include "core/threadpool.h"
+
+// 全局默认常量，可通过init参数动态覆盖
+const int DEFAULT_MAX_FD = 65536;
+const int DEFAULT_MAX_EVENT_NUMBER = 10000;
+const int DEFAULT_TIMESLOT = 5;
+
+class WebServer {
+public:
+  WebServer();
+  ~WebServer();
+
+  // 初始化，支持动态传入超时、最大fd、事件上限，覆盖默认常量
+  void init(int port, std::string user, std::string passWord,
+            std::string databaseName, int log_write, int opt_linger,
+            int trigmode, int sql_num, int thread_num, int close_log,
+            int actor_model, int timeslot = DEFAULT_TIMESLOT,
+            int max_fd = DEFAULT_MAX_FD,
+            int max_event = DEFAULT_MAX_EVENT_NUMBER);
+
+  void thread_pool();
+  void sql_pool();
+  void log_write();
+  void trig_mode();
+  void eventListen();
+  void eventLoop();
+
+  // 定时器相关
+  void timer(int connfd, struct sockaddr_in client_address);
+  void adjust_timer(util_timer *timer);
+  void deal_timer(util_timer *timer, int sockfd);
+
+  // 事件分发处理
+  bool dealclientdata();
+  bool dealwithsignal(bool &timeout, bool &stop_server);
+  void dealwithread(int sockfd);
+  void dealwithwrite(int sockfd);
+
+  // ========== 只读Getter接口，外部仅能读取，不可修改 ==========
+  int get_port() const;
+  const char *get_root() const;
+  int get_log_write() const;
+  int get_close_log() const;
+  int get_actor_model() const;
+  int get_epollfd() const;
+  int get_listenfd() const;
+  int get_opt_linger() const;
+  int get_trig_mode() const;
+  int get_listen_trig_mode() const;
+  int get_conn_trig_mode() const;
+  int get_sql_num() const;
+  int get_thread_num() const;
+  int get_time_slot() const;
+  int get_max_fd() const;
+  int get_max_event() const;
+
+  std::string get_db_user() const;
+  std::string get_db_passwd() const;
+  std::string get_db_name() const;
+
+  // 设置网站根目录（仅初始化阶段调用，运行时禁止修改）
+  void set_root(const char *root);
+
+  // 禁止拷贝构造、赋值，持有epoll/管道/线程池等不可复制资源
+  WebServer(const WebServer &) = delete;
+  WebServer &operator=(const WebServer &) = delete;
+
+private:
+  // ========== 全部成员私有，外部无法直接访问 ==========
+  // 基础运行配置
+  int m_port;
+  char *m_root;
+  int m_log_write;
+  int m_close_log;
+  int m_actormodel;
+
+  int m_pipefd[2];
+  int m_epollfd;
+
+  // 动态可配置上限，替代全局硬编码常量
+  int m_MAX_FD;
+  int m_MAX_EVENT_NUMBER;
+  int m_TIMESLOT;
+
+  // 客户端HTTP连接数组
+  http_conn *users;
+  // 定时器客户端上下文数组
+  client_data *users_timer;
+
+  // 数据库连接池
+  connection_pool *m_connPool;
+  std::string m_user;
+  std::string m_passWord;
+  std::string m_databaseName;
+  int m_sql_num;
+
+  // 业务线程池
+  threadpool<http_conn> *m_pool;
+  int m_thread_num;
+
+  // epoll事件数组
+  epoll_event *events;
+
+  // 监听套接字、TCP/epoll触发配置
+  int m_listenfd;
+  int m_OPT_LINGER;
+  int m_TRIGMode;
+  int m_LISTENTrigmode;
+  int m_CONNTrigmode;
+
+  // 定时器工具类
+  Utils utils;
+
+  // 新增：多线程共享资源互斥锁，保护定时器链表、连接数组
+  locker m_conn_lock;
+  locker m_timer_lock;
+};
+
+#endif
