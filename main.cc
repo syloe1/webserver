@@ -6,7 +6,7 @@ using namespace std;
 
 // 数据库配置抽离，方便统一修改，后续可迁移到配置文件
 const string DB_USER = "root";
-const string DB_PASSWD = "root";
+const string DB_PASSWD = "qaz123";
 const string DB_NAME = "db";
 
 int main(int argc, char *argv[]) {

@@ -58,8 +58,67 @@ sudo yum install -y gcc-c++ cmake make mysql-devel
 
 ### 准备数据库
 
+#### 1. 安装 MySQL Server
+
+编译时只需要客户端库 (`libmysqlclient-dev`)，但**运行时必须有 MySQL 服务**。如果本机没有安装，先执行：
+
+```bash
+# Ubuntu/Debian
+sudo apt install -y mysql-server
+
+# CentOS/RHEL
+sudo yum install -y mysql-server
+```
+
+#### 2. 启动 MySQL 服务
+
+```bash
+# Systemd 系统（Ubuntu 18.04+ / CentOS 7+）
+sudo systemctl start mysql
+sudo systemctl enable mysql   # 设为开机自启
+
+# 检查服务状态
+sudo systemctl status mysql
+```
+
+#### 3. 配置密码认证（重要）
+
+Ubuntu 新装 MySQL 默认使用 `auth_socket` 插件 —— 这意味着只有系统 root 用户才能通过 `sudo mysql` 登录，**密码登录被禁用**。程序通过 TCP 连接数据库必须使用密码认证，需要先修改认证方式。
+
+```bash
+# Step 1: 用 socket 方式登录（无需密码）
+sudo mysql
+
+# Step 2: 查看当前 root 的认证插件（确认是否为 auth_socket）
+SELECT user, host, plugin FROM mysql.user WHERE user='root';
+# 如果你看到 plugin 列显示 "auth_socket"，说明需要修改
+```
+
+然后执行以下 SQL 切换到密码认证：
+
 ```sql
--- 登录 MySQL
+-- 将 root 用户的认证插件改为 mysql_native_password，同时设置密码
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '你的密码';
+
+-- 刷新权限使修改生效
+FLUSH PRIVILEGES;
+
+-- 验证：退出后用密码重新登录
+EXIT;
+```
+
+```bash
+# 用密码重新登录测试（注意：必须用 -p，不能用 sudo mysql）
+mysql -u root -p
+# 输入你刚设置的密码，能进入就说明配置成功
+```
+
+> **提示**：MySQL 8.0+ 默认使用 `caching_sha2_password` 插件。如果连接报错 `Authentication plugin 'caching_sha2_password' cannot be loaded`，请改用 `mysql_native_password` 插件（如上所示），兼容性最好。
+
+#### 4. 创建数据库和表
+
+```sql
+-- 登录 MySQL（用密码方式）
 mysql -u root -p
 
 -- 创建数据库
@@ -72,9 +131,82 @@ CREATE TABLE user (
     passwd   VARCHAR(100) NOT NULL
 );
 
--- 可选：插入测试用户
+-- 可选：插入测试用户（密码明文存储仅用于演示，生产环境请使用哈希）
 INSERT INTO user VALUES ('admin', '123456');
+
+-- 验证表是否创建成功
+DESC user;
+SELECT * FROM user;
 ```
+
+#### 5. （推荐）创建专用数据库用户
+
+用 root 直连有安全风险，建议创建一个仅对 `db` 库有权限的专用用户：
+
+```sql
+-- 创建用户并设置密码
+CREATE USER 'webuser'@'localhost' IDENTIFIED WITH mysql_native_password BY 'webserver123';
+
+-- 授予 db 数据库的全部权限
+GRANT ALL PRIVILEGES ON db.* TO 'webuser'@'localhost';
+
+-- 也可以只授予必要权限（更安全）
+-- GRANT SELECT, INSERT, UPDATE ON db.* TO 'webuser'@'localhost';
+
+FLUSH PRIVILEGES;
+
+-- 验证新用户能否登录
+EXIT;
+```
+
+```bash
+mysql -u webuser -p
+# 输入密码：webserver123
+# 执行 USE db; SELECT * FROM user; 确认有权限
+```
+
+#### 6. 修改 main.cc 中的数据库配置
+
+数据库创建完成后，需要将连接信息填入代码。打开 [main.cc](main.cc)，修改文件顶部的三个常量：
+
+```cpp
+// 数据库配置抽离，方便统一修改，后续可迁移到配置文件
+const string DB_USER = "root";        // 改为你的数据库用户名
+const string DB_PASSWD = "qaz123";    // 改为你设置的密码
+const string DB_NAME = "db";          // 数据库名（默认 db 不用改）
+```
+
+**示例**：如果你按照上面的步骤用 root + 密码 `MyPass@2024`：
+
+```cpp
+const string DB_USER = "root";
+const string DB_PASSWD = "MyPass@2024";
+const string DB_NAME = "db";
+```
+
+如果创建了专用用户 `webuser`：
+
+```cpp
+const string DB_USER = "webuser";
+const string DB_PASSWD = "webserver123";
+const string DB_NAME = "db";
+```
+
+> **注意**：修改 `main.cc` 后需要**重新编译**才能生效：
+> ```bash
+> cd build && make -j$(nproc)
+> ```
+
+#### 7. 常见问题排查
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| `Can't connect to MySQL server on 'localhost'` | MySQL 服务未启动 | `sudo systemctl start mysql` |
+| `Access denied for user 'root'@'localhost'` | 密码错误或仍用 auth_socket | 按第 3 步重设密码和认证插件 |
+| `Unknown database 'db'` | 未创建数据库 | 按第 4 步执行 `CREATE DATABASE db;` |
+| `Table 'db.user' doesn't exist` | 未创建表 | 按第 4 步执行建表语句 |
+| `Authentication plugin 'xxx' cannot be loaded` | 认证插件不兼容 | 改用 `mysql_native_password`（见第 3 步提示） |
+| 程序启动后数据库相关功能无响应 | 连接池配置过大或密码错误 | 检查 `main.cc` 中密码是否正确，或将 `-s` 参数调小 |
 
 ### 编译
 
