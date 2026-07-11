@@ -26,6 +26,7 @@ set(SERVER_SOURCES
     src/core/log.cc
     src/core/lst_timer.cc
     src/core/io_uring_engine.cc
+    src/core/buffer_ring.cc
 
     src/db/sql_connection_pool.cc
     src/db/user_cache.cc

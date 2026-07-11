@@ -18,6 +18,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include "core/buffer_ring.h"
 #include "core/io_uring_engine.h"
 #include "core/locker.h"
 #include "core/log.h"
@@ -94,7 +95,7 @@ public:
 
   // ==== io_uring 异步 I/O 接口 ====
   void submit_recv();                        // 主线程直接提交 RECV
-  void on_recv_done(int bytes_read);         // RECV CQE 回调
+  void on_recv_done(int bytes_read, int buf_id);  // RECV CQE 回调
   void on_send_done();                       // SEND CQE 回调（主线程）
 
   // 定时器标记、线程同步标记
@@ -111,8 +112,9 @@ public:
   METHOD get_method() const;
 
 public:
-  // 全局 io_uring 引擎 + 单线程统一提交队列
+  // 全局 io_uring 引擎 + BufferPool + 单线程统一提交队列
   static IoUringEngine *m_ring;
+  static BufferPool   *s_buf_pool;
   static int m_user_count;
   static locker m_count_lock;
 

@@ -31,6 +31,7 @@ WebServer::WebServer()
 
 WebServer::~WebServer() {
   m_uring.destroy();
+  delete m_buf_pool;
   if (m_listenfd >= 0) close(m_listenfd);
   if (m_pipefd[1] >= 0) close(m_pipefd[1]);
   if (m_pipefd[0] >= 0) close(m_pipefd[0]);
@@ -129,9 +130,13 @@ void WebServer::eventListen() {
   assert(m_uring.init(512));
   http_conn::m_ring = &m_uring;
 
-  // 信号管道：读端 BLOCKING（io_uring READ 阻塞等待，充当 wakeup）
+  // BufferPool: 在首次 submit 前注册 buffer ring
+  m_buf_pool = new BufferPool(m_uring.get_ring(), 512);
+  http_conn::s_buf_pool = m_buf_pool;
+
+  // 信号管道
   assert(socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd) != -1);
-  utils.setnonblocking(m_pipefd[1]);  // 写端非阻塞
+  utils.setnonblocking(m_pipefd[1]);
 
   utils.addsig(SIGPIPE, SIG_IGN);
   utils.addsig(SIGALRM, utils.sig_handler, false);
@@ -140,9 +145,9 @@ void WebServer::eventListen() {
 
   Utils::u_pipefd[0] = m_pipefd[0];
   Utils::u_pipefd[1] = m_pipefd[1];
-  http_conn::s_wakeup_fd = m_pipefd[1];  // worker 唤醒用
+  http_conn::s_wakeup_fd = m_pipefd[1];
 
-  // 提交 multishot accept（一个 SQE，持续接受新连接）+ pipe 阻塞读
+  // 提交初始 SQ: multishot accept + pipe 阻塞读
   io_uring_sqe *sqe = m_uring.prepare_multishot_accept(m_listenfd, nullptr, nullptr, 0);
   if (sqe) m_uring.sqe_set_data(sqe, &g_accept_marker);
   sqe = m_uring.prepare_recv(m_pipefd[0], m_signal_buf, 1, 0);
@@ -260,7 +265,11 @@ void WebServer::eventLoop() {
           util_timer *t = users_timer[sockfd].timer;
           deal_timer(t, sockfd);
         } else {
-          conn->on_recv_done(res);
+          // 从 CQE 提取 buffer ring 的 buf_id
+          int buf_id = -1;
+          if (cqe->flags & IORING_CQE_F_BUFFER)
+            buf_id = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+          conn->on_recv_done(res, buf_id);
           if (0 == m_actormodel)
             m_pool->append_p(conn);
           else

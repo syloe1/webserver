@@ -5,26 +5,43 @@
 
 int http_conn::m_user_count = 0;
 IoUringEngine *http_conn::m_ring = nullptr;
+BufferPool   *http_conn::s_buf_pool = nullptr;
 locker http_conn::m_count_lock;
 
-// 待提交队列（worker 线程入队，主线程 flush）
 locker http_conn::s_sq_lock;
 std::list<http_conn *> http_conn::s_sq_queue;
 int    http_conn::s_wakeup_fd = -1;
+
+// 准备 RECV SQE（buffer ring 或普通模式）
+void http_conn::submit_recv() {
+  io_uring_sqe *sqe = nullptr;
+  if (s_buf_pool) {
+    // buffer ring 模式：内核自动选 buffer，len 必须为 0
+    sqe = m_ring->prepare_recv(m_sockfd, nullptr, 0, 0);
+    if (sqe) {
+      sqe->buf_group = BUF_GROUP_ID;
+      sqe->flags |= IOSQE_BUFFER_SELECT;
+    }
+  } else {
+    // 普通模式：用 m_read_buf
+    sqe = m_ring->prepare_recv(m_sockfd, m_read_buf, READ_BUFFER_SIZE, 0);
+  }
+  if (sqe)
+    m_ring->sqe_set_data(sqe, IoUringEngine::tag_recv(this));
+}
 
 // worker 线程调用：入队 + 写 pipe 唤醒主线程
 void http_conn::enqueue_to_main(http_conn *conn) {
   s_sq_lock.lock();
   s_sq_queue.push_back(conn);
   s_sq_lock.unlock();
-  // 唤醒主线程（写 1 字节到 pipe，触发 io_uring pipe CQE）
   if (s_wakeup_fd >= 0) {
     char wake_byte = 0;
     write(s_wakeup_fd, &wake_byte, 1);
   }
 }
 
-// 主线程调用：批量准备 SQE，一次 submit（收敛系统调用）
+// 主线程调用：批量准备 SQE，一次 submit
 void http_conn::flush_main_queue() {
   bool has_work = false;
   s_sq_lock.lock();
@@ -50,25 +67,18 @@ void http_conn::flush_main_queue() {
     }
     if (conn->m_need_recv) {
       conn->m_need_recv = false;
-      io_uring_sqe *sqe = m_ring->prepare_recv(conn->m_sockfd,
-          conn->m_read_buf + conn->m_read_idx,
-          http_conn::READ_BUFFER_SIZE - conn->m_read_idx, 0);
-      if (sqe) {
-        m_ring->sqe_set_data(sqe, IoUringEngine::tag_recv(conn));
-        has_work = true;
-      }
+      conn->submit_recv();
+      has_work = true;
     }
 
     s_sq_lock.lock();
   }
   s_sq_lock.unlock();
 
-  // 批量提交：所有 SQE 一次 submit
   if (has_work)
     m_ring->submit();
 }
 
-// 调度入口（worker 线程执行，只设标记不提交 SQ）
 void http_conn::process() {
   HTTP_CODE read_ret = process_read();
   if (read_ret == NO_REQUEST) {
@@ -85,27 +95,36 @@ void http_conn::process() {
   enqueue_to_main(this);
 }
 
-// CQE 回调（主线程，可直接提交）
-void http_conn::on_recv_done(int bytes_read) {
-  m_read_idx = bytes_read;
+// RECV CQE 回调：buffer ring 模式从 pool 拷贝，普通模式数据已在 m_read_buf
+void http_conn::on_recv_done(int bytes_read, int buf_id) {
+  if (buf_id >= 0 && s_buf_pool) {
+    void *src = s_buf_pool->get_buf_ptr(buf_id);
+    size_t copy_len = (bytes_read > 0)
+        ? std::min((size_t)bytes_read, (size_t)READ_BUFFER_SIZE - m_read_idx)
+        : 0;
+    if (copy_len > 0)
+      memcpy(m_read_buf + m_read_idx, src, copy_len);
+    s_buf_pool->release(buf_id);
+  }
+  m_read_idx += bytes_read;
 }
 
 void http_conn::on_send_done() {
   unmap();
   if (m_linger) {
     init();
-    // 准备 RECV SQE，由 submit_and_wait 统一提交
-    io_uring_sqe *sqe = m_ring->prepare_recv(m_sockfd,
-        m_read_buf, READ_BUFFER_SIZE, 0);
+    // keep-alive: submit_recv（buffer ring 或普通模式）
+    io_uring_sqe *sqe = nullptr;
+    if (s_buf_pool) {
+      sqe = m_ring->prepare_recv(m_sockfd, nullptr, 0, 0);
+      if (sqe) {
+        sqe->buf_group = BUF_GROUP_ID;
+        sqe->flags |= IOSQE_BUFFER_SELECT;
+      }
+    } else {
+      sqe = m_ring->prepare_recv(m_sockfd, m_read_buf, READ_BUFFER_SIZE, 0);
+    }
     if (sqe)
       m_ring->sqe_set_data(sqe, IoUringEngine::tag_recv(this));
   }
-}
-
-// accept 后的首次 RECV（主线程，SQE 由 submit_and_wait 统一提交）
-void http_conn::submit_recv() {
-  io_uring_sqe *sqe = m_ring->prepare_recv(m_sockfd,
-      m_read_buf, READ_BUFFER_SIZE, 0);
-  if (sqe)
-    m_ring->sqe_set_data(sqe, IoUringEngine::tag_recv(this));
 }

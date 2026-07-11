@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "core/buffer_ring.h"
 #include "core/io_uring_engine.h"
 #include "core/locker.h"
 #include "core/lst_timer.h"
@@ -89,8 +90,9 @@ private:
   int m_pipefd[2];
   char m_signal_buf[1024];
 
-  // io_uring 引擎（替代 epoll）
+  // io_uring 引擎 + BufferPool（替代 epoll）
   IoUringEngine m_uring;
+  BufferPool   *m_buf_pool = nullptr;
 
   // 动态可配置上限，替代全局硬编码常量
   int m_MAX_FD;
