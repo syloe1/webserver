@@ -131,20 +131,14 @@ bool connection_pool::ReleaseConnection(MYSQL *conn) {
 
 // 销毁连接池
 void connection_pool::DestroyPool() {
-  // 等待所有连接归还
-  while (true) {
-    locker_guard guard(lock);
-    if (m_FreeConn == m_CurConn)
-      break;
-  }
-
+  // 不等待归还：直接关闭池中现有的连接
+  // worker 线程持有的连接由 connectionRAII 析构自己归还/关闭
   locker_guard guard(lock);
   while (!connPool.empty()) {
     MYSQL *con = connPool.front();
     connPool.pop();
     mysql_close(con);
   }
-
   m_CurConn = 0;
   m_FreeConn = 0;
 }

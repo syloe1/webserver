@@ -28,6 +28,7 @@ void http_conn::submit_recv() {
   }
   if (sqe)
     m_ring->sqe_set_data(sqe, IoUringEngine::tag_recv(this));
+  m_ring->submit();
 }
 
 // worker 线程调用：入队 + 写 pipe 唤醒主线程
@@ -86,6 +87,16 @@ void http_conn::process() {
     enqueue_to_main(this);
     return;
   }
+  // 请求日志：METHOD URL -> STATUS
+  const char *method_str = (m_method == POST) ? "POST" : "GET";
+  const char *status_str = "200";
+  if (read_ret == BAD_REQUEST)      status_str = "400";
+  else if (read_ret == FORBIDDEN_REQUEST) status_str = "403";
+  else if (read_ret == NO_RESOURCE) status_str = "404";
+  else if (read_ret == INTERNAL_ERROR)   status_str = "500";
+  else if (read_ret == FILE_REQUEST)     status_str = "200";
+  LOG_INFO("%s %s -> %s", method_str, m_url.c_str(), status_str);
+
   bool write_ret = process_write(read_ret);
   if (!write_ret) {
     close_conn();
@@ -99,11 +110,13 @@ void http_conn::process() {
 void http_conn::on_recv_done(int bytes_read, int buf_id) {
   if (buf_id >= 0 && s_buf_pool) {
     void *src = s_buf_pool->get_buf_ptr(buf_id);
-    size_t copy_len = (bytes_read > 0)
-        ? std::min((size_t)bytes_read, (size_t)READ_BUFFER_SIZE - m_read_idx)
-        : 0;
-    if (copy_len > 0)
-      memcpy(m_read_buf + m_read_idx, src, copy_len);
+    if (src) {
+      size_t copy_len = (bytes_read > 0)
+          ? std::min((size_t)bytes_read, (size_t)READ_BUFFER_SIZE - m_read_idx)
+          : 0;
+      if (copy_len > 0)
+        memcpy(m_read_buf + m_read_idx, src, copy_len);
+    }
     s_buf_pool->release(buf_id);
   }
   m_read_idx += bytes_read;
@@ -113,7 +126,7 @@ void http_conn::on_send_done() {
   unmap();
   if (m_linger) {
     init();
-    // keep-alive: submit_recv（buffer ring 或普通模式）
+    // keep-alive: 立即提交 RECV SQE，防止 kernel 来不及接收下个请求
     io_uring_sqe *sqe = nullptr;
     if (s_buf_pool) {
       sqe = m_ring->prepare_recv(m_sockfd, nullptr, 0, 0);
@@ -126,5 +139,27 @@ void http_conn::on_send_done() {
     }
     if (sqe)
       m_ring->sqe_set_data(sqe, IoUringEngine::tag_recv(this));
+    m_ring->submit();
   }
+}
+
+// SEND CQE 处理：全部发送完返回 true，部分发送更新 iovec 重传
+bool http_conn::on_send_cqe(int bytes_sent) {
+  if (bytes_sent <= 0) return false;
+  if (bytes_sent >= bytes_to_send) return true;
+  // 部分发送：更新 iovec 继续
+  bytes_have_send += bytes_sent;
+  bytes_to_send   -= bytes_sent;
+  if ((size_t)bytes_have_send >= m_iv[0].iov_len) {
+    m_iv[0].iov_len = 0;
+    m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
+    m_iv[1].iov_len   = bytes_to_send;
+  } else {
+    m_iv[0].iov_base = m_write_buf + bytes_have_send;
+    m_iv[0].iov_len -= bytes_sent;
+  }
+  io_uring_sqe *sqe = m_ring->prepare_writev(m_sockfd, m_iv, m_iv_count, 0);
+  if (sqe) m_ring->sqe_set_data(sqe, IoUringEngine::tag_send(this));
+  m_ring->submit();
+  return false;
 }

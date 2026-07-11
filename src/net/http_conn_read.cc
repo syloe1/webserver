@@ -158,8 +158,6 @@ http_conn::HTTP_CODE http_conn::parse_headers(const char *text) {
     text += 5;
     text += strspn(text, " \t");
     m_host = std::string(text);
-  } else {
-    LOG_INFO("oop!unknow header: %s", text);
   }
   return NO_REQUEST;
 }
@@ -186,7 +184,6 @@ http_conn::HTTP_CODE http_conn::process_read() {
          ((line_status = parse_line()) == LINE_OK)) {
     text = get_line();
     m_start_line = m_checked_idx;
-    LOG_INFO("%s", text);
     switch (m_check_state) {
     case CHECK_STATE_REQUESTLINE: {
       ret = parse_request_line(text);

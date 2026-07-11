@@ -97,6 +97,7 @@ public:
   void submit_recv();                        // 主线程直接提交 RECV
   void on_recv_done(int bytes_read, int buf_id);  // RECV CQE 回调
   void on_send_done();                       // SEND CQE 回调（主线程）
+  bool on_send_cqe(int bytes_sent);           // 处理 SEND CQE，返回 true=完成 false=需重传
 
   // 定时器标记、线程同步标记
   int timer_flag;

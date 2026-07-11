@@ -35,9 +35,10 @@ WebServer::~WebServer() {
   if (m_listenfd >= 0) close(m_listenfd);
   if (m_pipefd[1] >= 0) close(m_pipefd[1]);
   if (m_pipefd[0] >= 0) close(m_pipefd[0]);
+  // 先停线程池（worker 可能还在访问 http_conn），再释放数组
+  delete m_pool;
   delete[] users;
   delete[] users_timer;
-  delete m_pool;
   if (m_root) free(m_root);
 }
 
@@ -81,9 +82,9 @@ void WebServer::trig_mode() {}
 void WebServer::log_write() {
   if (0 == m_close_log) {
     if (1 == m_log_write)
-      Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);
+      Log::get_instance()->init("./ServerLog", m_close_log, 2000, 500, 800);
     else
-      Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);
+      Log::get_instance()->init("./ServerLog", m_close_log, 2000, 500, 0);
   } else {
     Log::get_instance()->m_close_log = 1;
   }
@@ -130,9 +131,10 @@ void WebServer::eventListen() {
   assert(m_uring.init(512));
   http_conn::m_ring = &m_uring;
 
-  // BufferPool: 在首次 submit 前注册 buffer ring
-  m_buf_pool = new BufferPool(m_uring.get_ring(), 512);
-  http_conn::s_buf_pool = m_buf_pool;
+  // TODO: buffer ring 稳定性调试中，暂时禁用
+  // m_buf_pool = new BufferPool(m_uring.get_ring(), 512);
+  // http_conn::s_buf_pool = m_buf_pool;
+  http_conn::s_buf_pool = nullptr;
 
   // 信号管道
   assert(socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd) != -1);
@@ -153,6 +155,7 @@ void WebServer::eventListen() {
   sqe = m_uring.prepare_recv(m_pipefd[0], m_signal_buf, 1, 0);
   if (sqe) m_uring.sqe_set_data(sqe, &g_wakeup_marker);
   m_uring.submit();
+  LOG_INFO("server started on port %d", m_port);
 }
 
 // ===================== timer =====================
@@ -204,8 +207,8 @@ void WebServer::eventLoop() {
 
     // 2. 阻塞等待 CQE（pipe 读端阻塞 → worker 写 pipe 唤醒）
     int ret = m_uring.submit_and_wait(1);
-    if (ret < 0) {
-      LOG_ERROR("io_uring submit_and_wait failed: %d", ret);
+    if (ret < 0 && ret != -EINTR) {
+      LOG_ERROR("submit_and_wait error: %d (%s)", ret, strerror(-ret));
       break;
     }
 
@@ -265,10 +268,8 @@ void WebServer::eventLoop() {
           util_timer *t = users_timer[sockfd].timer;
           deal_timer(t, sockfd);
         } else {
-          // 从 CQE 提取 buffer ring 的 buf_id
-          int buf_id = -1;
-          if (cqe->flags & IORING_CQE_F_BUFFER)
-            buf_id = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+          // 从 CQE 提取 buffer ring 的 buf_id（buf_ring 永远设此字段）
+          int buf_id = (int)(cqe->flags >> IORING_CQE_BUFFER_SHIFT);
           conn->on_recv_done(res, buf_id);
           if (0 == m_actormodel)
             m_pool->append_p(conn);
@@ -283,13 +284,17 @@ void WebServer::eventLoop() {
         http_conn *conn = static_cast<http_conn *>(
             IoUringEngine::untag(data));
         int sockfd = conn->get_sockfd();
-        util_timer *t = users_timer[sockfd].timer;
-        if (conn->is_linger()) {
-          conn->on_send_done();
-          adjust_timer(t);
-        } else {
-          deal_timer(t, sockfd);
+        if (conn->on_send_cqe(res)) {
+          // 全部发送完毕
+          util_timer *t = users_timer[sockfd].timer;
+          if (conn->is_linger()) {
+            conn->on_send_done();
+            adjust_timer(t);
+          } else {
+            deal_timer(t, sockfd);
+          }
         }
+        // 部分发送：on_send_cqe 已重新提交，等下一个 CQE
       }
 
       m_uring.cqe_seen(cqe);

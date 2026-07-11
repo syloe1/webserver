@@ -172,6 +172,7 @@ void Log::write_log(int level, const char *format, ...) {
     m_log_queue->push(log_str);
   } else {
     fputs(log_str.c_str(), m_fp);
+    fflush(m_fp);  // 立即落盘，否则 libc 缓冲导致日志丢失
   }
 }
 
@@ -190,6 +191,7 @@ void *Log::async_write_log() {
       break; // 空消息作为退出标记
     locker_guard guard(m_mutex);
     fputs(single_log.c_str(), m_fp);
+    fflush(m_fp);
   }
   return nullptr;
 }

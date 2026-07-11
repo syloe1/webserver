@@ -108,7 +108,8 @@ void sort_timer_lst::tick() {
       break;
     // 执行超时回调
     tmp->cb_func(tmp->user_data);
-    // 移除头节点
+    if (tmp->user_data)
+      tmp->user_data->timer = nullptr;
     head = tmp->next;
     if (head)
       head->prev = nullptr;

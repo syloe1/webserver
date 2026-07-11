@@ -32,6 +32,7 @@ private:
     sem m_queuestat;            //是否有任务需要处理
     connection_pool *m_connPool;  //数据库
     int m_actor_model;          //模型切换
+    bool m_stop = false;        // 析构标记
 };
 template <typename T>
 threadpool<T>::threadpool( int actor_model, connection_pool *connPool, int thread_number, int max_requests) : m_thread_number(thread_number), m_max_requests(max_requests), m_threads(NULL), m_connPool(connPool), m_actor_model(actor_model)
@@ -58,6 +59,10 @@ threadpool<T>::threadpool( int actor_model, connection_pool *connPool, int threa
 template <typename T>
 threadpool<T>::~threadpool()
 {
+    m_stop = true;
+    // 唤醒所有阻塞在 sem_wait 的 worker
+    for (int i = 0; i < m_thread_number; i++)
+        m_queuestat.post();
     delete[] m_threads;
 }
 template <typename T>
@@ -99,9 +104,10 @@ void *threadpool<T>::worker(void *arg)
 template <typename T>
 void threadpool<T>::run()
 {
-    while (true)
+    while (!m_stop)
     {
         m_queuestat.wait();
+        if (m_stop) break;
         m_queuelocker.lock();
         if (m_workqueue.empty())
         {
