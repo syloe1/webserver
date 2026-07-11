@@ -28,12 +28,6 @@ void UserCache::load_all_users(connection_pool *connPool) {
   // 从表中检索完整的结果集
   MYSQL_RES *result = mysql_store_result(mysql);
 
-  // 返回结果集中的列数
-  int num_fields = mysql_num_fields(result);
-
-  // 返回所有字段结构的数组
-  MYSQL_FIELD *fields = mysql_fetch_fields(result);
-
   // 从结果集中获取下一行，将对应的用户名和密码，存入map中
   lock_->lock();
   while (MYSQL_ROW row = mysql_fetch_row(result)) {

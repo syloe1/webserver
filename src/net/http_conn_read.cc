@@ -129,7 +129,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(const char *text) {
 
   // 当url为/时，显示判断界面
   if (m_url == "/")
-    m_url = "judge.html";
+    m_url = "/judge.html";
 
   m_check_state = CHECK_STATE_HEADER;
   return NO_REQUEST;

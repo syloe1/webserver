@@ -200,6 +200,7 @@ void Utils::sig_handler(int sig) {
 }
 
 void Utils::addsig(int sig, void(handler)(int), bool restart) {
+  (void)sig;
   struct sigaction sa;
   memset(&sa, '\0', sizeof(sa));
   sa.sa_handler = handler;

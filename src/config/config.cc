@@ -24,7 +24,7 @@ void Config::print_usage() const {
   printf("Options:\n");
   printf("  -p num   Listen port (1-65535, default 9006)\n");
   printf("  -l 0/1   Log mode:0 sync,1 async (default 0)\n");
-  printf("  -m 0/1   Epoll trigger combo (default 0 LT+LT)\n");
+  printf("  -m 0-3   Epoll trigger combo (default 0 LT+LT)\n");
   printf("  -o 0/1   Enable linger close (default 0 off)\n");
   printf("  -s num   Mysql connection pool size (>=1, default 8)\n");
   printf("  -t num   Thread pool worker count (>=1, default 8)\n");
@@ -79,8 +79,8 @@ bool Config::check_valid() const {
   // 日志模式仅允许0同步、1异步
   if (LOGWrite < 0 || LOGWrite > 1)
     return false;
-  // epoll触发模式仅允许0 LT、1 ET
-  if (TRIGMode < 0 || TRIGMode > 1)
+  // epoll触发模式：0 LT+LT, 1 LT+ET, 2 ET+LT, 3 ET+ET
+  if (TRIGMode < 0 || TRIGMode > 3)
     return false;
   // TCP优雅关闭仅允许0关闭、1开启
   if (OPT_LINGER < 0 || OPT_LINGER > 1)

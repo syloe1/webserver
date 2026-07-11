@@ -43,8 +43,8 @@ public:
   util_timer *prev, *next;        // 双向链表前后指针
 
   util_timer()
-      : prev(nullptr), next(nullptr), expire(0), cb_func(nullptr),
-        user_data(nullptr) {}
+      : expire(0), cb_func(nullptr), user_data(nullptr), prev(nullptr),
+        next(nullptr) {}
 };
 
 // 有序升序双向定时器链表

@@ -21,7 +21,9 @@ WebServer::WebServer()
 
   // 初始化网站根目录
   char server_path[200];
-  getcwd(server_path, sizeof(server_path));
+  if (!getcwd(server_path, sizeof(server_path))) {
+    server_path[0] = '\0';
+  }
   const char sub_root[] = "/static";
   size_t total_len = strlen(server_path) + strlen(sub_root) + 1;
   m_root = (char *)malloc(total_len);
@@ -140,6 +142,10 @@ void WebServer::log_write() {
       Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);
     else
       Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);
+  } else {
+    // 关闭日志时也必须同步标志到单例，防止 LOG_* 宏因 m_close_log 不同步
+    // 而调用 write_log() 导致 fclose(NULL) 崩溃
+    Log::get_instance()->m_close_log = 1;
   }
 }
 
@@ -196,6 +202,7 @@ void WebServer::eventListen() {
 
   ret = socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd);
   assert(ret != -1);
+  (void)ret;
   utils.setnonblocking(m_pipefd[1]);
   utils.addfd(m_epollfd, m_pipefd[0], false, 0);
 
@@ -304,7 +311,6 @@ bool WebServer::dealclientdata() {
 // ===================== dealwithsignal 管道信号处理 =====================
 bool WebServer::dealwithsignal(bool &timeout, bool &stop_server) {
   int ret = 0;
-  int sig;
   char signals[1024];
   ret = recv(m_pipefd[0], signals, sizeof(signals), 0);
   if (ret == -1 || ret == 0) {

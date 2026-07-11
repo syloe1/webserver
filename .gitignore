@@ -60,3 +60,6 @@ test/tmp/
 tmp/
 temp/
 *.tmp
+
+#=== script
+scripts.*

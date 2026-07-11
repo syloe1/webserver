@@ -24,9 +24,6 @@ http_conn::HTTP_CODE http_conn::do_request() {
   // ===================== CGI登录/注册处理 =====================
   if (cgi == 1 && (url_suffix == '2' || url_suffix == '3')) {
 
-    // 根据标志判断是登录检测还是注册检测
-    char flag = m_url[1];
-
     std::string url_real = "/" + m_url.substr(2);
     m_real_file = doc_root + url_real;
 

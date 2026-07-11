@@ -110,6 +110,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
       if (!add_content(ok_string))
         return false;
     }
+    break;
   }
   default:
     return false;
@@ -145,7 +146,7 @@ bool http_conn::write() {
 
     bytes_have_send += temp;
     bytes_to_send -= temp;
-    if (bytes_have_send >= m_iv[0].iov_len) {
+    if (static_cast<size_t>(bytes_have_send) >= m_iv[0].iov_len) {
       m_iv[0].iov_len = 0;
       m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
       m_iv[1].iov_len = bytes_to_send;

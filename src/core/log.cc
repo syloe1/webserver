@@ -10,9 +10,9 @@
 using namespace std;
 
 Log::Log()
-    : m_count(0), m_is_async(false), m_close_log(0), m_log_buf_size(0),
-      m_buf(nullptr), m_log_queue(nullptr), m_fp(nullptr), m_today(0),
-      m_split_lines(0) {}
+    : m_close_log(0), m_split_lines(0), m_log_buf_size(0), m_count(0),
+      m_today(0), m_fp(nullptr), m_buf(nullptr), m_log_queue(nullptr),
+      m_is_async(false) {}
 
 Log::~Log() {
   // 1. 异步模式：唤醒阻塞的写线程，等待队列消费完毕
@@ -68,15 +68,15 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size,
   struct tm *sys_tm = localtime(&t);
   struct tm my_tm = *sys_tm;
   const char *p = strrchr(file_name, '/');
-  char log_full_name[256] = {0};
+  char log_full_name[384] = {0};
 
   if (p == nullptr) {
-    snprintf(log_full_name, sizeof(log_full_name) - 1, "%d_%02d_%02d_%s",
+    snprintf(log_full_name, sizeof(log_full_name), "%d_%02d_%02d_%s",
              my_tm.tm_year + 1900, my_tm.tm_mon + 1, my_tm.tm_mday, file_name);
   } else {
     strncpy(log_name, p + 1, sizeof(log_name) - 1);
     strncpy(dir_name, file_name, p - file_name + 1);
-    snprintf(log_full_name, sizeof(log_full_name) - 1, "%s%d_%02d_%02d_%s",
+    snprintf(log_full_name, sizeof(log_full_name), "%s%d_%02d_%02d_%s",
              dir_name, my_tm.tm_year + 1900, my_tm.tm_mon + 1, my_tm.tm_mday,
              log_name);
   }
@@ -89,6 +89,11 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size,
 }
 
 void Log::write_log(int level, const char *format, ...) {
+  // 防御: 日志系统未初始化或 m_fp 为空时直接跳过，避免 fclose(NULL) 崩溃
+  if (m_fp == nullptr) {
+    return;
+  }
+
   struct timeval now = {0, 0};
   gettimeofday(&now, nullptr);
   time_t t = now.tv_sec;
@@ -122,22 +127,23 @@ void Log::write_log(int level, const char *format, ...) {
   locker_guard guard(m_mutex);
   m_count++;
 
-  // 判断是否需要切割日志
-  if (m_today != my_tm.tm_mday || m_count % m_split_lines == 0) {
-    char new_log[256] = {0};
+  // 判断是否需要切割日志（m_split_lines 必须 > 0 才做切割，防止除零）
+  if (m_split_lines > 0 &&
+      (m_today != my_tm.tm_mday || m_count % m_split_lines == 0)) {
+    char new_log[384] = {0};
     fflush(m_fp);
     fclose(m_fp);
-    char tail[16] = {0};
-    snprintf(tail, sizeof(tail) - 1, "%d_%02d_%02d_", my_tm.tm_year + 1900,
+    char tail[32] = {0};
+    snprintf(tail, sizeof(tail), "%d_%02d_%02d_", my_tm.tm_year + 1900,
              my_tm.tm_mon + 1, my_tm.tm_mday);
 
     if (m_today != my_tm.tm_mday) {
-      snprintf(new_log, sizeof(new_log) - 1, "%s%s%s", dir_name, tail,
+      snprintf(new_log, sizeof(new_log), "%s%s%s", dir_name, tail,
                log_name);
       m_today = my_tm.tm_mday;
       m_count = 0;
     } else {
-      snprintf(new_log, sizeof(new_log) - 1, "%s%s%s.%lld", dir_name, tail,
+      snprintf(new_log, sizeof(new_log), "%s%s%s.%lld", dir_name, tail,
                log_name, m_count / m_split_lines);
     }
     m_fp = fopen(new_log, "a");
@@ -171,7 +177,9 @@ void Log::write_log(int level, const char *format, ...) {
 
 void Log::flush(void) {
   locker_guard guard(m_mutex);
-  fflush(m_fp);
+  if (m_fp != nullptr) {
+    fflush(m_fp);
+  }
 }
 
 // 后台消费线程：阻塞读取日志并写入文件

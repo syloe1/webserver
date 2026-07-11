@@ -8,12 +8,12 @@
 
 // ===================== 构造 =====================
 http_conn::http_conn()
-    : m_sockfd(-1), m_read_idx(0), m_checked_idx(0), m_start_line(0),
+    : timer_flag(0), improv(0), mysql(nullptr), m_state(0), m_sockfd(-1),
+      m_read_idx(0), m_checked_idx(0), m_start_line(0), m_write_idx(0),
       m_check_state(CHECK_STATE_REQUESTLINE), m_method(GET),
       m_content_length(0), m_linger(false), m_file_address(nullptr),
       m_iv_count(0), cgi(0), bytes_to_send(0), bytes_have_send(0),
-      m_TRIGMode(0), m_close_log(0), m_state(0), timer_flag(0), improv(0),
-      mysql(nullptr), m_write_idx(0) {
+      m_TRIGMode(0), m_close_log(0) {
   memset(m_read_buf, '\0', READ_BUFFER_SIZE);
   memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
 }
