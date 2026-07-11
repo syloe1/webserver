@@ -6,23 +6,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <pthread.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/epoll.h>
-#include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/uio.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
-#include "core/locker.h" // 引入互斥锁
-#include "core/log.h"
+#include "core/locker.h"
 #include <time.h>
 
 class util_timer;
@@ -75,48 +67,27 @@ private:
   sort_timer_lst &operator=(const sort_timer_lst &) = delete;
 };
 
-// 全局工具类：epoll、信号、定时器、fd工具统一封装
+// 全局工具类：信号、定时器、fd工具统一封装
 class Utils {
 public:
   Utils();
   ~Utils();
 
-  // 初始化定时节拍、管道、信号
   void init(int timeslot);
-
-  // 设置fd为非阻塞IO
   int setnonblocking(int fd);
-
-  // epoll注册fd读事件，支持ET/LT、EPOLLONESHOT
-  void addfd(int epollfd, int fd, bool one_shot, int TRIGMode);
-
-  // 信号统一处理静态回调
   static void sig_handler(int sig);
-
-  // 注册自定义信号处理函数，支持SA_RESTART
   void addsig(int sig, void(handler)(int), bool restart = true);
-
-  // SIGALRM触发的定时任务，驱动定时器tick
   void timer_handler();
-
-  // 向客户端输出错误信息
   void show_error(int connfd, const char *info);
-
-  // 静态只读获取epollfd，禁止外部直接修改
-  static int get_epollfd();
-  // 静态只读获取管道fd数组，禁止外部直接修改
   static int get_pipefd(int idx);
 
 public:
-  // 全局epoll fd与管道，WebServer主控直接设置
   static int u_pipefd[2];
-  static int u_epollfd;
 
 public:
-  sort_timer_lst m_timer_lst; // 有序定时器链表
-  int m_TIMESLOT;             // 定时节拍（秒）
+  sort_timer_lst m_timer_lst;
+  int m_TIMESLOT;
 
-  // 禁止拷贝、赋值（持有管道、epoll、定时器资源）
   Utils(const Utils &) = delete;
   Utils &operator=(const Utils &) = delete;
 };

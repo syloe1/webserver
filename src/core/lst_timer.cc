@@ -8,7 +8,6 @@
 
 // 静态私有全局资源定义
 int Utils::u_pipefd[2] = {0, 0};
-int Utils::u_epollfd = 0;
 
 // ===================== sort_timer_lst 实现 =====================
 sort_timer_lst::sort_timer_lst() : head(nullptr), tail(nullptr) {}
@@ -153,7 +152,6 @@ Utils::~Utils() {
   if (u_pipefd[1] > 0)
     close(u_pipefd[1]);
   u_pipefd[0] = u_pipefd[1] = 0;
-  u_epollfd = 0;
 }
 
 void Utils::init(int timeslot) {
@@ -166,21 +164,6 @@ int Utils::setnonblocking(int fd) {
   int new_option = old_option | O_NONBLOCK;
   fcntl(fd, F_SETFL, new_option);
   return old_option;
-}
-
-void Utils::addfd(int epollfd, int fd, bool one_shot, int TRIGMode) {
-  epoll_event event;
-  event.data.fd = fd;
-
-  if (1 == TRIGMode)
-    event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-  else
-    event.events = EPOLLIN | EPOLLRDHUP;
-
-  if (one_shot)
-    event.events |= EPOLLONESHOT;
-  epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
-  setnonblocking(fd);
 }
 
 void Utils::sig_handler(int sig) {
@@ -214,9 +197,6 @@ void Utils::show_error(int connfd, const char *info) {
   // 2. 关闭客户端socket，断开TCP连接
   close(connfd);
 }
-
-// 静态只读Getter
-int Utils::get_epollfd() { return u_epollfd; }
 
 int Utils::get_pipefd(int idx) {
   if (idx < 0 || idx > 1)

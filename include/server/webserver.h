@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -73,7 +72,7 @@ public:
   // 设置网站根目录（仅初始化阶段调用，运行时禁止修改）
   void set_root(const char *root);
 
-  // 禁止拷贝构造、赋值，持有epoll/管道/线程池等不可复制资源
+  // 禁止拷贝构造、赋值，持有 io_uring/管道/线程池等不可复制资源
   WebServer(const WebServer &) = delete;
   WebServer &operator=(const WebServer &) = delete;
 
