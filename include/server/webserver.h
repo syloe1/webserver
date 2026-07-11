@@ -13,14 +13,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "core/io_uring_engine.h"
 #include "core/locker.h"
-#include "net/http_conn.h"
 #include "core/lst_timer.h"
 #include "core/threadpool.h"
+#include "net/http_conn.h"
 
 // 全局默认常量，可通过init参数动态覆盖
 const int DEFAULT_MAX_FD = 65536;
-const int DEFAULT_MAX_EVENT_NUMBER = 10000;
 const int DEFAULT_TIMESLOT = 5;
 
 class WebServer {
@@ -34,7 +34,7 @@ public:
             int trigmode, int sql_num, int thread_num, int close_log,
             int actor_model, int timeslot = DEFAULT_TIMESLOT,
             int max_fd = DEFAULT_MAX_FD,
-            int max_event = DEFAULT_MAX_EVENT_NUMBER);
+            int max_event = 10000);
 
   void thread_pool();
   void sql_pool();
@@ -48,11 +48,9 @@ public:
   void adjust_timer(util_timer *timer);
   void deal_timer(util_timer *timer, int sockfd);
 
-  // 事件分发处理
+  // 事件分发处理（io_uring 版本）
   bool dealclientdata();
   bool dealwithsignal(bool &timeout, bool &stop_server);
-  void dealwithread(int sockfd);
-  void dealwithwrite(int sockfd);
 
   // ========== 只读Getter接口，外部仅能读取，不可修改 ==========
   int get_port() const;
@@ -60,12 +58,8 @@ public:
   int get_log_write() const;
   int get_close_log() const;
   int get_actor_model() const;
-  int get_epollfd() const;
   int get_listenfd() const;
   int get_opt_linger() const;
-  int get_trig_mode() const;
-  int get_listen_trig_mode() const;
-  int get_conn_trig_mode() const;
   int get_sql_num() const;
   int get_thread_num() const;
   int get_time_slot() const;
@@ -92,8 +86,12 @@ private:
   int m_close_log;
   int m_actormodel;
 
+  // 信号管道（保持 pipe，用 io_uring 异步读）
   int m_pipefd[2];
-  int m_epollfd;
+  char m_signal_buf[1024];
+
+  // io_uring 引擎（替代 epoll）
+  IoUringEngine m_uring;
 
   // 动态可配置上限，替代全局硬编码常量
   int m_MAX_FD;
@@ -116,15 +114,9 @@ private:
   threadpool<http_conn> *m_pool;
   int m_thread_num;
 
-  // epoll事件数组
-  epoll_event *events;
-
-  // 监听套接字、TCP/epoll触发配置
+  // 监听套接字、TCP linger 配置
   int m_listenfd;
   int m_OPT_LINGER;
-  int m_TRIGMode;
-  int m_LISTENTrigmode;
-  int m_CONNTrigmode;
 
   // 定时器工具类
   Utils utils;

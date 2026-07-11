@@ -115,31 +115,16 @@ void threadpool<T>::run()
             continue;
         if (1 == m_actor_model)
         {
+            // io_uring 下 Reactor 简化：I/O 已由内核异步完成，线程池只做业务
             if (0 == request->m_state)
             {
-                if (request->read_once())
-                {
-                    request->improv = 1;
-                    connectionRAII mysqlcon(&request->mysql, m_connPool);
-                    request->process();
-                }
-                else
-                {
-                    request->improv = 1;
-                    request->timer_flag = 1;
-                }
+                request->improv = 1;
+                connectionRAII mysqlcon(&request->mysql, m_connPool);
+                request->process();
             }
             else
             {
-                if (request->write())
-                {
-                    request->improv = 1;
-                }
-                else
-                {
-                    request->improv = 1;
-                    request->timer_flag = 1;
-                }
+                request->improv = 1;
             }
         }
         else

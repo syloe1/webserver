@@ -15,6 +15,7 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 # ===================== 查找依赖库 =====================
 find_package(Threads REQUIRED)
 find_library(MYSQL_CLIENT mysqlclient REQUIRED)
+find_library(URING uring REQUIRED)
 
 # ===================== 主服务源文件 =====================
 set(SERVER_SOURCES
@@ -24,6 +25,7 @@ set(SERVER_SOURCES
 
     src/core/log.cc
     src/core/lst_timer.cc
+    src/core/io_uring_engine.cc
 
     src/db/sql_connection_pool.cc
     src/db/user_cache.cc
@@ -44,6 +46,7 @@ add_executable(TinyWebServer ${SERVER_SOURCES})
 target_link_libraries(TinyWebServer
     Threads::Threads
     ${MYSQL_CLIENT}
+    ${URING}
 )
 
 # ===================== 拷贝 static 到 build 目录 =====================

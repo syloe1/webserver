@@ -158,16 +158,7 @@ Utils::~Utils() {
 
 void Utils::init(int timeslot) {
   m_TIMESLOT = timeslot;
-  // 创建管道
-  if (pipe(u_pipefd) == -1) {
-    LOG_ERROR("pipe create failed");
-    return;
-  }
-  // 管道两端设置非阻塞
-  setnonblocking(u_pipefd[0]);
-  setnonblocking(u_pipefd[1]);
-  // 管道读端注册到epoll
-  addfd(u_epollfd, u_pipefd[0], true, 0);
+  // io_uring 下管道由 WebServer::eventListen 创建和管理，这里仅保存定时节拍
 }
 
 int Utils::setnonblocking(int fd) {
@@ -237,12 +228,9 @@ void cb_func(client_data *user_data) {
   if (!user_data)
     return;
 
-  // 2. 从epoll内核事件表删除该客户端socket fd，不再监听它的读写事件
-  epoll_ctl(Utils::u_epollfd, EPOLL_CTL_DEL, user_data->sockfd, nullptr);
-
-  // 3. 关闭socket文件描述符，释放操作系统TCP连接资源
+  // 2. 关闭 socket fd（io_uring 下无需 epoll_ctl DEL）
   close(user_data->sockfd);
 
-  // 4. 全局在线连接计数-1，统计当前服务活跃客户端数量
+  // 3. 全局在线连接计数-1，统计当前服务活跃客户端数量
   http_conn::m_user_count--;
 }

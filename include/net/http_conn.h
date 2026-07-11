@@ -23,10 +23,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "db/sql_connection_pool.h"
+#include "core/io_uring_engine.h"
 #include "core/locker.h"
 #include "core/log.h"
 #include "core/lst_timer.h"
+#include "db/sql_connection_pool.h"
+#include <list>
 
 class http_conn {
 public:
@@ -86,17 +88,19 @@ public:
   // 业务主逻辑：解析请求 + 组装响应
   void process();
 
-  // 非阻塞读取TCP数据
+  // 非阻塞读取TCP数据（首次 accept 后仍可用）
   bool read_once();
-
-  // 非阻塞发送响应数据
-  bool write();
 
   // 获取客户端地址
   sockaddr_in *get_address() { return &m_address; }
 
   // 预加载数据库用户表
   void initmysql_result(connection_pool *connPool);
+
+  // ==== io_uring 异步 I/O 接口 ====
+  void submit_recv();                        // 主线程直接提交 RECV
+  void on_recv_done(int bytes_read);         // RECV CQE 回调
+  void on_send_done();                       // SEND CQE 回调（主线程）
 
   // 定时器标记、线程同步标记
   int timer_flag;
@@ -112,19 +116,26 @@ public:
   METHOD get_method() const;
 
 public:
-  // 全局epoll fd，所有连接共用
-  static int m_epollfd;
-  // 全局在线连接计数，配套静态锁保证多线程安全
+  // 全局 io_uring 引擎 + 单线程统一提交队列
+  static IoUringEngine *m_ring;
   static int m_user_count;
   static locker m_count_lock;
 
-  // 当前连接数据库句柄，封装释放逻辑
+  // worker → main 线程的待提交队列（锁 + list）
+  static locker s_sq_lock;
+  static std::list<http_conn *> s_sq_queue;
+  static int    s_wakeup_fd;  // pipe 写端 fd，worker 入队后写 1 字节唤醒主线程
+  static void enqueue_to_main(http_conn *conn);
+  static void flush_main_queue();  // 主线程 eventLoop 调用
+
   MYSQL *mysql;
-  // 0=读事件，1=写事件
   int m_state;
 
+  // worker 线程设标记，主线程读并清空
+  bool m_need_send = false;
+  bool m_need_recv = false;
+
 private:
-  // 内部重置连接所有状态
   void init();
 
   // 完整解析HTTP请求报文

@@ -2,9 +2,10 @@
 // http_conn 生命周期管理：构造、析构、初始化、关闭
 // ============================================================
 #include "net/http_conn.h"
-#include "db/user_cache.h"
 #include "net/socket_tool.h"
+#include "db/user_cache.h"
 #include <cstring>
+#include <unistd.h>
 
 // ===================== 构造 =====================
 http_conn::http_conn()
@@ -31,7 +32,7 @@ http_conn::~http_conn() {
 void http_conn::close_conn(bool real_close) {
   if (real_close && (m_sockfd != -1)) {
     printf("close %d\n", m_sockfd);
-    removefd(m_epollfd, m_sockfd);
+    close(m_sockfd);
     m_sockfd = -1;
     m_user_count--;
   }
@@ -44,7 +45,7 @@ void http_conn::init(int sockfd, const sockaddr_in &addr, std::string root,
   m_sockfd = sockfd;
   m_address = addr;
 
-  addfd(m_epollfd, sockfd, true, m_TRIGMode);
+  setnonblocking(m_sockfd);
   m_user_count++;
 
   doc_root = root;
