@@ -14,7 +14,7 @@ TinyWebServer
 
 # ========== 日志文件（项目运行生成log） ==========
 *.log
-*_ServerLog
+*_ServerLog*
 logs/
 log/
 
