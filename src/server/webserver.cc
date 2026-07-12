@@ -143,6 +143,7 @@ void WebServer::eventListen() {
   utils.addsig(SIGPIPE, SIG_IGN);
   utils.addsig(SIGALRM, utils.sig_handler, false);
   utils.addsig(SIGTERM, utils.sig_handler, false);
+  utils.addsig(SIGINT,  utils.sig_handler, false);
   alarm(m_TIMESLOT);
 
   Utils::u_pipefd[0] = m_pipefd[0];
@@ -208,7 +209,8 @@ void WebServer::eventLoop() {
     // 2. 阻塞等待 CQE（pipe 读端阻塞 → worker 写 pipe 唤醒）
     int ret = m_uring.submit_and_wait(1);
     if (ret < 0 && ret != -EINTR) {
-      LOG_ERROR("submit_and_wait error: %d (%s)", ret, strerror(-ret));
+      LOG_ERROR("submit_and_wait error: %d (%s) — server shutting down", ret, strerror(-ret));
+      stop_server = true;
       break;
     }
 
@@ -249,7 +251,8 @@ void WebServer::eventLoop() {
         if (res > 0) {
           for (int i = 0; i < res; ++i) {
             if (m_signal_buf[i] == SIGALRM) timeout = true;
-            if (m_signal_buf[i] == SIGTERM) stop_server = true;
+            if (m_signal_buf[i] == SIGTERM || m_signal_buf[i] == SIGINT)
+              stop_server = true;
           }
         }
         // 可能是 worker 唤醒，刷队列
@@ -306,4 +309,5 @@ void WebServer::eventLoop() {
       timeout = false;
     }
   }
+  LOG_INFO("server stopped (%s)", stop_server ? "signal" : "error");
 }

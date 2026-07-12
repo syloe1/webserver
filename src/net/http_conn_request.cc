@@ -27,12 +27,15 @@ http_conn::HTTP_CODE http_conn::do_request() {
     std::string url_real = "/" + m_url.substr(2);
     m_real_file = doc_root + url_real;
 
-    // 将用户名和密码提取出来
-    // m_post_data格式: "user=123&passwd=123"
+    // 解析 POST body: "user=xxx&passwd=yyy"
     std::string post_data = m_post_data;
-    size_t amp_pos = post_data.find('&');
-    std::string name = post_data.substr(5, amp_pos - 5);
-    std::string password = post_data.substr(amp_pos + 10);
+    size_t user_start = post_data.find("user=");
+    size_t pass_start = post_data.find("&passwd=");
+    std::string name, password;
+    if (user_start != std::string::npos && pass_start != std::string::npos) {
+      name     = post_data.substr(user_start + 5, pass_start - user_start - 5);
+      password = post_data.substr(pass_start + 8);
+    }
 
     UserCache *cache = UserCache::getInstance();
 
@@ -58,6 +61,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
       } else
         m_url = "/registerError.html";
       free(sql_insert);
+      return REDIRECT;
     } else if (url_suffix == '2') {
       // 如果是登录，直接判断
       // 若浏览器端输入的用户名和密码在表中可以查找到，返回1，否则返回0
@@ -65,6 +69,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
         m_url = "/welcome.html";
       else
         m_url = "/logError.html";
+      return REDIRECT;
     }
   }
 

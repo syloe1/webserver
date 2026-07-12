@@ -106,7 +106,8 @@ http_conn::HTTP_CODE http_conn::parse_request_line(const char *text) {
   version_start += strspn(version_start, " \t");
   m_version = std::string(version_start);
 
-  if (strcasecmp(m_version.c_str(), "HTTP/1.1") != 0)
+  if (strcasecmp(m_version.c_str(), "HTTP/1.1") != 0 &&
+      strcasecmp(m_version.c_str(), "HTTP/1.0") != 0)
     return BAD_REQUEST;
 
   // 去除 http:// 或 https:// 前缀

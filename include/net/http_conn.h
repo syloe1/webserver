@@ -60,6 +60,7 @@ public:
     FORBIDDEN_REQUEST,
     FILE_REQUEST,
     INTERNAL_ERROR,
+    REDIRECT,
     CLOSED_CONNECTION
   };
   // 单行解析状态

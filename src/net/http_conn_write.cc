@@ -109,6 +109,12 @@ bool http_conn::process_write(HTTP_CODE ret) {
     }
     break;
   }
+  case REDIRECT: {
+    add_status_line(302, "Found");
+    add_response("Location:%s\r\n", m_url.c_str());
+    add_headers(0);
+    break;
+  }
   default:
     return false;
   }
