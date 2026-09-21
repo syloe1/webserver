@@ -1,5 +1,10 @@
 // ============================================================
-// http_conn 读解析逻辑：非阻塞读、HTTP报文状态机解析
+// http_conn 读解析逻辑：HTTP 报文状态机
+//
+// 状态机本身与回调式版本完全一致 —— 这正是协程的价值所在：
+// "数据不够"（NO_REQUEST）天然映射成一次 co_await，不需要把状态
+// 拆成回调。只要保证 m_checked_idx / m_start_line / m_read_idx 这些
+// 游标在跨挂起时保持正确，暂停再继续就是透明的。
 // ============================================================
 #include "net/http_conn.h"
 #include <cstring>
@@ -31,45 +36,6 @@ http_conn::LINE_STATUS http_conn::parse_line() {
     }
   }
   return LINE_OPEN;
-}
-
-// ===================== read_once =====================
-// 循环读取客户数据，直到无数据可读或对方关闭连接
-// 非阻塞ET工作模式下，需要一次性将数据读完
-bool http_conn::read_once() {
-  if (m_read_idx >= READ_BUFFER_SIZE) {
-    return false;
-  }
-  int bytes_read = 0;
-
-  // LT读取数据
-  if (0 == m_TRIGMode) {
-    bytes_read = recv(m_sockfd, m_read_buf + m_read_idx,
-                      READ_BUFFER_SIZE - m_read_idx, 0);
-    m_read_idx += bytes_read;
-
-    if (bytes_read <= 0) {
-      return false;
-    }
-
-    return true;
-  }
-  // ET读数据
-  else {
-    while (true) {
-      bytes_read = recv(m_sockfd, m_read_buf + m_read_idx,
-                        READ_BUFFER_SIZE - m_read_idx, 0);
-      if (bytes_read == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-          break;
-        return false;
-      } else if (bytes_read == 0) {
-        return false;
-      }
-      m_read_idx += bytes_read;
-    }
-    return true;
-  }
 }
 
 // ===================== parse_request_line =====================
@@ -144,6 +110,9 @@ http_conn::HTTP_CODE http_conn::parse_headers(const char *text) {
       m_check_state = CHECK_STATE_CONTENT;
       return NO_REQUEST;
     }
+    // 无请求体：空行之后就是下一个请求的起点。
+    // parse_line 已把 m_checked_idx 推过这一行的 CRLF。
+    m_parse_consumed = m_checked_idx;
     return GET_REQUEST;
   } else if (strncasecmp(text, "Connection:", 11) == 0) {
     text += 11;
@@ -169,13 +138,20 @@ http_conn::HTTP_CODE http_conn::parse_content(const char *text) {
   if (m_read_idx >= (m_content_length + m_checked_idx)) {
     // POST请求中最后为输入的用户名和密码
     m_post_data = std::string(text, m_content_length);
+    // 进入 CONTENT 状态时 m_start_line 与 m_checked_idx 都停在 body 起点
+    m_parse_consumed = m_checked_idx + m_content_length;
     return GET_REQUEST;
   }
   return NO_REQUEST;
 }
 
 // ===================== process_read =====================
-// 完整HTTP报文解析状态机主循环
+// 完整HTTP报文解析状态机主循环。
+//
+// 与回调版唯一的差别：解析完毕时返回 GET_REQUEST，而不是就地调用
+// do_request()。因为 do_request() 现在是协程（要异步 statx/openat/
+// 卸载 DB），调用点必须在协程里，所以把它上提到 run()。
+// 这样 process_read 保持同步，热路径零协程开销。
 http_conn::HTTP_CODE http_conn::process_read() {
   LINE_STATUS line_status = LINE_OK;
   HTTP_CODE ret = NO_REQUEST;
@@ -196,15 +172,14 @@ http_conn::HTTP_CODE http_conn::process_read() {
       ret = parse_headers(text);
       if (ret == BAD_REQUEST)
         return BAD_REQUEST;
-      else if (ret == GET_REQUEST) {
-        return do_request();
-      }
+      else if (ret == GET_REQUEST)
+        return GET_REQUEST;
       break;
     }
     case CHECK_STATE_CONTENT: {
       ret = parse_content(text);
       if (ret == GET_REQUEST)
-        return do_request();
+        return GET_REQUEST;
       line_status = LINE_OPEN;
       break;
     }

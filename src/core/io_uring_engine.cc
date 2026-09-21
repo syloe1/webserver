@@ -83,6 +83,63 @@ io_uring_sqe *IoUringEngine::prepare_writev(int fd, const struct iovec *iov,
     return sqe;
 }
 
+// ---- 协程版新增的 opcode ----
+
+io_uring_sqe *IoUringEngine::prepare_read(int fd, void *buf, unsigned len,
+                                          off_t offset) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&m_ring);
+    if (!sqe)
+        return nullptr;
+    io_uring_prep_read(sqe, fd, buf, len, offset);
+    return sqe;
+}
+
+io_uring_sqe *IoUringEngine::prepare_statx(int dfd, const char *path, int flags,
+                                           unsigned mask, struct statx *buf) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&m_ring);
+    if (!sqe)
+        return nullptr;
+    io_uring_prep_statx(sqe, dfd, path, flags, mask, buf);
+    return sqe;
+}
+
+io_uring_sqe *IoUringEngine::prepare_openat(int dfd, const char *path, int flags,
+                                            mode_t mode) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&m_ring);
+    if (!sqe)
+        return nullptr;
+    io_uring_prep_openat(sqe, dfd, path, flags, mode);
+    return sqe;
+}
+
+io_uring_sqe *IoUringEngine::prepare_timeout(struct __kernel_timespec *ts,
+                                             unsigned count, unsigned flags) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&m_ring);
+    if (!sqe)
+        return nullptr;
+    io_uring_prep_timeout(sqe, ts, count, flags);
+    return sqe;
+}
+
+io_uring_sqe *IoUringEngine::prepare_cancel(const void *user_data,
+                                            unsigned flags) {
+    io_uring_sqe *sqe = io_uring_get_sqe(&m_ring);
+    if (!sqe)
+        return nullptr;
+    io_uring_prep_cancel(sqe, const_cast<void *>(user_data), flags);
+    return sqe;
+}
+
+// ---- 队列水位 ----
+
+unsigned IoUringEngine::sq_space_left() {
+    return io_uring_sq_space_left(&m_ring);
+}
+
+unsigned IoUringEngine::cq_ready() {
+    return io_uring_cq_ready(&m_ring);
+}
+
 // ---- 提交 ----
 
 int IoUringEngine::submit() {

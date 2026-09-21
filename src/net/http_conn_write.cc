@@ -1,19 +1,16 @@
 // ============================================================
-// http_conn 响应拼接与发送：add_xxx、process_write、write、unmap
+// http_conn 响应拼接：add_xxx、process_write
+//
+// 与回调版的差别：不再预先把 m_iv[] 拼好等 on_send_cqe 原地改，
+// 而是只记下响应头长度和文件体长度，由 send_all() 每轮按已发字节
+// 重新构造 iovec。
 // ============================================================
 #include "net/http_conn.h"
 #include "net/http_const.h"
-#include "net/socket_tool.h"
-#include <cstdarg>
-#include <sys/uio.h>
 
-// ===================== unmap =====================
-void http_conn::unmap() {
-  if (m_file_address) {
-    munmap(m_file_address, m_file_stat.st_size);
-    m_file_address = 0;
-  }
-}
+#include <cstdarg>
+#include <cstring>
+#include <sys/uio.h>
 
 // ===================== add_response =====================
 bool http_conn::add_response(const char *format, ...) {
@@ -38,13 +35,13 @@ bool http_conn::add_status_line(int status, const char *title) {
 }
 
 // ===================== add_headers =====================
-bool http_conn::add_headers(int content_len) {
+bool http_conn::add_headers(long long content_len) {
   return add_content_length(content_len) && add_linger() && add_blank_line();
 }
 
 // ===================== add_content_length =====================
-bool http_conn::add_content_length(int content_len) {
-  return add_response("Content-Length:%d\r\n", content_len);
+bool http_conn::add_content_length(long long content_len) {
+  return add_response("Content-Length:%lld\r\n", content_len);
 }
 
 // ===================== add_content_type =====================
@@ -77,6 +74,14 @@ bool http_conn::process_write(HTTP_CODE ret) {
     break;
   }
   case BAD_REQUEST: {
+    // 400 就该回 400 —— 原实现在这里错发了 404 的页面
+    add_status_line(400, error_400_title);
+    add_headers(strlen(error_400_form));
+    if (!add_content(error_400_form))
+      return false;
+    break;
+  }
+  case NO_RESOURCE: {
     add_status_line(404, error_404_title);
     add_headers(strlen(error_404_form));
     if (!add_content(error_404_form))
@@ -92,21 +97,15 @@ bool http_conn::process_write(HTTP_CODE ret) {
   }
   case FILE_REQUEST: {
     add_status_line(200, ok_200_title);
-    if (m_file_stat.st_size != 0) {
-      add_headers(m_file_stat.st_size);
-      m_iv[0].iov_base = m_write_buf;
-      m_iv[0].iov_len = m_write_idx;
-      m_iv[1].iov_base = m_file_address;
-      m_iv[1].iov_len = m_file_stat.st_size;
-      m_iv_count = 2;
-      bytes_to_send = m_write_idx + m_file_stat.st_size;
+    if (m_file_stat.stx_size != 0) {
+      add_headers(static_cast<long long>(m_file_stat.stx_size));
+      m_file_len = static_cast<size_t>(m_file_stat.stx_size);
       return true;
-    } else {
-      const char *ok_string = "<html><body></body></html>";
-      add_headers(strlen(ok_string));
-      if (!add_content(ok_string))
-        return false;
     }
+    const char *ok_string = "<html><body></body></html>";
+    add_headers(strlen(ok_string));
+    if (!add_content(ok_string))
+      return false;
     break;
   }
   case REDIRECT: {
@@ -118,10 +117,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
   default:
     return false;
   }
-  m_iv[0].iov_base = m_write_buf;
-  m_iv[0].iov_len = m_write_idx;
-  m_iv_count = 1;
-  bytes_to_send = m_write_idx;
+  // 非文件响应：只有响应头，没有 body 部分
+  m_file_len = 0;
   return true;
 }
-

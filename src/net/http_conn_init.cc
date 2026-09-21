@@ -1,100 +1,91 @@
 // ============================================================
-// http_conn 生命周期管理：构造、析构、初始化、关闭
+// http_conn 生命周期管理：构造、析构、状态复位
 // ============================================================
 #include "net/http_conn.h"
-#include "net/socket_tool.h"
 #include "db/user_cache.h"
+#include "net/socket_tool.h"
+
 #include <cstring>
+#include <time.h>
 #include <unistd.h>
 
 // ===================== 构造 =====================
-http_conn::http_conn()
-    : timer_flag(0), improv(0), mysql(nullptr), m_state(0), m_sockfd(-1),
-      m_read_idx(0), m_checked_idx(0), m_start_line(0), m_write_idx(0),
-      m_check_state(CHECK_STATE_REQUESTLINE), m_method(GET),
-      m_content_length(0), m_linger(false), m_file_address(nullptr),
-      m_iv_count(0), cgi(0), bytes_to_send(0), bytes_have_send(0),
-      m_TRIGMode(0), m_close_log(0) {
+http_conn::http_conn(coro::Scheduler *sched, int sockfd,
+                     const sockaddr_in &addr,
+                     const coro::Scheduler::Options &opt)
+    : m_sched(sched),
+      m_opt(opt), m_sockfd(sockfd), m_address(addr), m_read_idx(0),
+      m_checked_idx(0), m_start_line(0), m_parse_consumed(0), m_write_idx(0),
+      m_check_state(CHECK_STATE_REQUESTLINE), m_method(GET), m_content_length(0),
+      m_linger(false), m_file_address(nullptr), m_file_len(0), cgi(0) {
   memset(m_read_buf, '\0', READ_BUFFER_SIZE);
   memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
+  memset(&m_file_stat, 0, sizeof(m_file_stat));
+
+  // 非阻塞：让 io_uring 走 poll 路径内联完成，而不是把 op 丢给 io-wq
+  setnonblocking(m_sockfd);
+  arm_deadline();
 }
 
 // ===================== 析构 =====================
 http_conn::~http_conn() {
-  // 仅关闭socket，不修改全局计数器（析构由delete[]触发）
-  if (m_sockfd != -1) {
-    close(m_sockfd);
+  unmap();
+  if (m_sockfd >= 0) {
+    ::close(m_sockfd);
     m_sockfd = -1;
+  }
+  // 正常回收路径上 Scheduler::drain_gc 已经 destroy 并 clear_frame()，
+  // 这里拿到的是空句柄。只有停机时 m_conns.clear() 才会带着活帧走到
+  // 这里，此时由本析构负责销毁。
+  if (m_frame) {
+    m_frame.destroy();
+    m_frame = {};
   }
 }
 
-// ===================== close_conn =====================
-void http_conn::close_conn(bool real_close) {
-  if (real_close && (m_sockfd != -1)) {
-    printf("close %d\n", m_sockfd);
-    close(m_sockfd);
-    m_sockfd = -1;
-    m_user_count--;
-  }
+// ===================== 空闲超时 =====================
+void http_conn::arm_deadline() noexcept {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  m_deadline_ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec +
+                  static_cast<int64_t>(m_opt.idle_timeout_ms) * 1000000LL;
 }
 
-// ===================== init(sockfd, ...) 外部初始化 =====================
-void http_conn::init(int sockfd, const sockaddr_in &addr, std::string root,
-                     int trig_mode, int close_log, std::string sql_user,
-                     std::string sql_passwd, std::string sql_db) {
-  m_sockfd = sockfd;
-  m_address = addr;
+// ===================== keep-alive 复位 =====================
+// 与 init() 的区别：保留缓冲区里**尚未被本次请求消费**的字节。
+// 客户端把两个请求塞进同一个 TCP 段（pipelining）时，第二个请求的
+// 字节已经在 m_read_buf 里了，清掉就等于静默丢弃 —— 客户端会一直等
+// 第二个响应，服务端却在 recv 上阻塞，直接死锁。
+void http_conn::reset_for_next_request() {
+  unmap();
 
-  setnonblocking(m_sockfd);
-  m_user_count++;
+  const long consumed = m_parse_consumed;
+  const long leftover = (m_read_idx > consumed) ? (m_read_idx - consumed) : 0;
+  if (leftover > 0 && consumed > 0)
+    memmove(m_read_buf, m_read_buf + consumed, static_cast<size_t>(leftover));
 
-  doc_root = root;
-  m_TRIGMode = trig_mode;
-  m_close_log = close_log;
-
-  this->sql_user = sql_user;
-  this->sql_passwd = sql_passwd;
-  this->sql_name = sql_db;
-
-  init();
-}
-
-// ===================== init() 内部状态重置 =====================
-void http_conn::init() {
-  mysql = NULL;
-  bytes_to_send = 0;
-  bytes_have_send = 0;
+  m_read_idx = leftover;
+  m_checked_idx = 0;
+  m_start_line = 0;
+  m_parse_consumed = 0;
+  m_write_idx = 0;
   m_check_state = CHECK_STATE_REQUESTLINE;
-  m_linger = false;
   m_method = GET;
   m_url.clear();
   m_version.clear();
-  m_content_length = 0;
   m_host.clear();
-  m_start_line = 0;
-  m_checked_idx = 0;
-  m_read_idx = 0;
-  m_write_idx = 0;
+  m_content_length = 0;
+  m_linger = false;
   cgi = 0;
-  m_state = 0;
-  timer_flag = 0;
-  improv = 0;
-
-  memset(m_read_buf, '\0', READ_BUFFER_SIZE);
-  memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
+  m_post_data.clear();
   m_real_file.clear();
+  m_file_len = 0;
+
+  memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
+  // 只清掉已消费区间，leftover 保留
+  if (leftover < READ_BUFFER_SIZE)
+    memset(m_read_buf + leftover, '\0',
+           static_cast<size_t>(READ_BUFFER_SIZE) - static_cast<size_t>(leftover));
 }
 
-// ===================== initmysql_result 委托给 UserCache =====================
-void http_conn::initmysql_result(connection_pool *connPool) {
-  UserCache::getInstance()->load_all_users(connPool);
-}
-
-// ===================== 只读Getter实现 =====================
-int http_conn::get_sockfd() const { return m_sockfd; }
-int http_conn::get_state() const { return m_state; }
-std::string http_conn::get_url() const { return m_url; }
-std::string http_conn::get_doc_root() const { return doc_root; }
-long http_conn::get_content_length() const { return m_content_length; }
-bool http_conn::is_linger() const { return m_linger; }
-http_conn::METHOD http_conn::get_method() const { return m_method; }
+// 只读 Getter 全部是头文件里的 inline 定义，这里不再重复实现。

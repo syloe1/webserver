@@ -31,15 +31,15 @@ int main(int argc, char *argv[]) {
 
   // 初始化日志模块
   server.log_write();
-  // 创建MySQL连接池
+  // 创建MySQL连接池，并把用户表加载进内存缓存
   server.sql_pool();
-  // 创建业务线程池
+  // 创建阻塞卸载池（协程版：MySQL 这类阻塞调用都丢给它）
   server.thread_pool();
-  // 设置epoll触发模式 LT/ET
+  // 空实现，保留只为兼容既有启动流程
   server.trig_mode();
-  // 创建监听socket并注册epoll
+  // 创建 N 个 Scheduler（每载体线程一个 io_uring + SO_REUSEPORT 监听 socket）
   server.eventListen();
-  // 主线程epoll事件循环，服务正式运行
+  // 启动载体线程并 join 到收到 SIGINT/SIGTERM
   server.eventLoop();
 
   return 0;

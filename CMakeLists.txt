@@ -2,8 +2,11 @@ cmake_minimum_required(VERSION 3.10)
 project(TinyWebServer VERSION 1.0 LANGUAGES C CXX)
 
 # ===================== 编译标准 =====================
-set(CMAKE_CXX_STANDARD 11)
+# 需要 C++20 协程（co_await/co_return）。保留 gnu 扩展：glibc 的
+# struct statx / STATX_* 要靠 _GNU_SOURCE 才在 <sys/stat.h> 里可见。
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 # ===================== 编译选项 =====================
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -g -Wall -Wextra")
@@ -24,9 +27,11 @@ set(SERVER_SOURCES
     src/config/config.cc
 
     src/core/log.cc
-    src/core/lst_timer.cc
     src/core/io_uring_engine.cc
-    src/core/buffer_ring.cc
+
+    # 协程调度核心：每载体线程一个 Scheduler + 一个阻塞卸载池
+    src/coro/scheduler.cc
+    src/coro/offload.cc
 
     src/db/sql_connection_pool.cc
     src/db/user_cache.cc
