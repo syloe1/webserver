@@ -38,10 +38,11 @@ echo "=== 8. 创建项目数据库和表 ==="
 mysql -u root -pqaz123 <<'SQL'
 CREATE DATABASE IF NOT EXISTS db;
 USE db;
+-- 与代码实际使用的表结构一致：username 作主键，无自增 id 列
 CREATE TABLE IF NOT EXISTS user (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(64) NOT NULL UNIQUE,
-    passwd  VARCHAR(64) NOT NULL
+    username VARCHAR(50) NOT NULL,
+    passwd   VARCHAR(50) NOT NULL,
+    PRIMARY KEY (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 INSERT IGNORE INTO user (username, passwd) VALUES ('admin', 'admin123');
 SQL
