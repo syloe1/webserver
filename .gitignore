@@ -64,3 +64,9 @@ temp/
 
 #=== script
 scripts.*
+
+# ========== 本地草稿 / 工具缓存（不入库） ==========
+.cache/
+.claude/
+learn.md
+面试.md
