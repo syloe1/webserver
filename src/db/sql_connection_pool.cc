@@ -47,8 +47,8 @@ MYSQL *connection_pool::CheckAndReBuildConn(MYSQL *old_conn) {
   if (mysql_ping(old_conn) == 0) {
     return old_conn;
   }
-
-  LOG_WARN("mysql connection lost, reconnecting...");
+  LOG_WARN("mysql connection lost, reconnecting... errno={}, msg={}",
+           mysql_errno(old_conn), mysql_error(old_conn));
   mysql_close(old_conn);
   return CreateMysqlConn();
 }
@@ -56,25 +56,27 @@ MYSQL *connection_pool::CheckAndReBuildConn(MYSQL *old_conn) {
 void connection_pool::init(string url, string User, string PassWord,
                            string dbname, int port, int maxconn,
                            int close_log) {
+  // 1. 把配置参数保存到成员变量
   m_url = url;
   m_user = User;
   m_passwd = PassWord;
   m_dbname = dbname;
-  m_port = to_string(port); // int 转 string
+  m_port = to_string(port); // int端口转字符串，刚好给CreateMysqlConn里面stoi用
   m_close_log = close_log;
 
+  // 2. 循环创建 maxconn 个mysql连接
   for (int i = 0; i < maxconn; i++) {
     MYSQL *con = CreateMysqlConn();
     if (!con) {
       LOG_ERROR("create mysql connection failed");
       throw runtime_error("init connection pool failed");
     }
-    connPool.push(con);
-    m_FreeConn++;
+    connPool.push(con); // 创建成功，放进空闲连接队列
+    m_FreeConn++;       // 空闲连接计数+1
   }
 
-  reserve.reinit(m_FreeConn);
-  m_MaxConn = m_FreeConn;
+  reserve.reinit(m_FreeConn); // 信号量初始化，值=空闲连接数量
+  m_MaxConn = m_FreeConn;     // 最大连接数 = 实际成功创建的连接数
 }
 
 // 阻塞获取连接

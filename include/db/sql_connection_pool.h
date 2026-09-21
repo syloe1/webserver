@@ -45,13 +45,12 @@ private:
   connection_pool();
   ~connection_pool();
 
-  int m_MaxConn;
-  int m_CurConn;
-  int m_FreeConn;
-  locker lock;
-  queue<MYSQL *> connPool;
-  sem reserve;
-
+  int m_MaxConn;           // 连接池最大连接数量
+  int m_CurConn;           // 当前已经创建的连接总数
+  int m_FreeConn;          // 当前空闲可用连接数量
+  locker lock;             // 互斥锁，保护队列connPool
+  queue<MYSQL *> connPool; // 空闲连接队列，存放MYSQL*
+  sem reserve;             // 信号量：空闲连接数量信号量
   // 禁止拷贝， 赋值
   connection_pool(const connection_pool &) = delete;
   connection_pool &operator=(const connection_pool &) = delete;

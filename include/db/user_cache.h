@@ -30,13 +30,12 @@ public:
   void insert_user(const std::string &name, const std::string &password);
 
 private:
-  UserCache();
+  UserCache(); // 构造私有， 只能通过getInstance() 拿到唯一全局对象
   ~UserCache() = default;
 
   // 禁止拷贝、赋值
   UserCache(const UserCache &) = delete;
   UserCache &operator=(const UserCache &) = delete;
-
   std::map<std::string, std::string> users_;
   locker *lock_;
 };
